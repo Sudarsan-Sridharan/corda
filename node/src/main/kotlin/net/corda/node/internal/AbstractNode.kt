@@ -29,6 +29,7 @@ import net.corda.core.serialization.SerializeAsToken
 import net.corda.core.serialization.SingletonSerializeAsToken
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.utilities.*
+import net.corda.node.internal.classloading.AppClassLoader
 import net.corda.node.services.NotaryChangeHandler
 import net.corda.node.services.NotifyTransactionHandler
 import net.corda.node.services.TransactionKeyHandler
@@ -91,8 +92,6 @@ import kotlin.collections.component2
 import kotlin.collections.set
 import kotlin.reflect.KClass
 import net.corda.core.crypto.generateKeyPair as cryptoGenerateKeyPair
-
-data class AppClassLoader(val version: Int) : ClassLoader()
 
 val appClassLoader = AppClassLoader(1)
 
@@ -362,7 +361,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         } else {
             "<unknown>"
         }
-        val flowFactory = InitiatedFlowFactory.CorDapp(version, appName, { 
+        val flowFactory = InitiatedFlowFactory.CorDapp(version, appName, {
             val out = ctor.newInstance(it)
             println("${out.javaClass.classLoader} == ${appClassLoader}")
             assert(out.javaClass.classLoader == appClassLoader)
@@ -472,7 +471,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         log.info("Scanning CorDapps in $paths")
 
         // This will only scan the plugin jars and nothing else
-        return if (paths.isNotEmpty()) FastClasspathScanner().overrideClasspath(paths).scan() else null
+        return if (paths.isNotEmpty()) FastClasspathScanner().addClassLoader(appClassLoader).overrideClasspath(paths).scan() else null
     }
 
     private fun <T : Any> ScanResult.getClassesWithAnnotation(type: KClass<T>, annotation: KClass<out Annotation>): List<Class<out T>> {
