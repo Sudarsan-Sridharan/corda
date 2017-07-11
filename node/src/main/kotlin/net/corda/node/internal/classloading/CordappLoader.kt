@@ -30,13 +30,13 @@ import kotlin.reflect.KClass
  * Handles Cordapp loading and classpath scanning
  */
 class CordappLoader private constructor (val cordappClassPath: List<Path>) {
-    val appClassLoader: AppClassLoader = AppClassLoader(1, cordappClassPath.map { it.toUri().toURL() }.toTypedArray())
+    val appClassLoader: CordappClassLoader = CordappClassLoader(1, cordappClassPath.map { it.toUri().toURL() }.toTypedArray())
     val scanResult = scanCordapps()
 
     companion object {
         private val logger = loggerFor<CordappLoader>()
 
-        fun createDefault(baseDir: Path): CordappLoader{
+        fun createDefault(baseDir: Path): CordappLoader {
             val pluginsDir = baseDir / "plugins"
             return CordappLoader(if (!pluginsDir.exists()) emptyList<Path>() else pluginsDir.list {
                 it.filter { it.isRegularFile() && it.toString().endsWith(".jar") }.collect(Collectors.toList())
