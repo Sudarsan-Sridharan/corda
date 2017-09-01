@@ -46,6 +46,11 @@ class InterfaceSchema(
         interfaces: List<Class<*>> = emptyList()
 ) : Schema(name, fields, superclass, interfaces)
 
+class EnumSchema(
+        name: String,
+        fields: Map<String, Field>
+) : Schema(name, fields, null, emptyList())
+
 object CarpenterSchemaFactory {
     fun newInstance (
             name: String,
@@ -95,7 +100,7 @@ abstract class Field(val field: Class<out Any?>) {
     abstract fun nullTest(mv: MethodVisitor, slot: Int)
 }
 
-class NonNullableField(field: Class<out Any?>) : Field(field) {
+open class NonNullableField(field: Class<out Any?>) : Field(field) {
     override val nullabilityAnnotation = "Ljavax/annotation/Nonnull;"
 
     constructor(name: String, field: Class<out Any?>) : this(field) {
@@ -135,6 +140,20 @@ class NullableField(field: Class<out Any?>) : Field(field) {
     }
 
     override fun copy(name: String, field: Class<out Any?>) = NullableField(name, field)
+
+    override fun nullTest(mv: MethodVisitor, slot: Int) {
+        assert(name != unsetName)
+    }
+}
+
+class EnumField() : NonNullableField(Enum::class.java) {
+    override val nullabilityAnnotation = "L/ERROR/SHOULD/NOT/BE/SET"
+
+    constructor(name: String) : this() {
+        this.name = name
+    }
+
+    override fun copy(name: String, field: Class<out Any?>) = EnumField(name)
 
     override fun nullTest(mv: MethodVisitor, slot: Int) {
         assert(name != unsetName)

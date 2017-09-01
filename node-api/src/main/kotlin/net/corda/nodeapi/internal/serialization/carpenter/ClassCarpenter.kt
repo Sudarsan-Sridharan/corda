@@ -107,12 +107,21 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
             when (it) {
                 is InterfaceSchema -> generateInterface(it)
                 is ClassSchema -> generateClass(it)
+                is EnumSchema -> generateEnum(it)
             }
         }
 
         assert (schema.name in _loaded)
 
         return _loaded[schema.name]!!
+    }
+
+    private fun generateEnum(enumSchema: Schema): Class<*> {
+        return generate(enumSchema) { cw, schema ->
+            with(cw) {
+                visitEnd()
+            }
+        }
     }
 
     private fun generateInterface(interfaceSchema: Schema): Class<*> {
