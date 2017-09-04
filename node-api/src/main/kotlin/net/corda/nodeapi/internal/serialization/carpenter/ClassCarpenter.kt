@@ -130,7 +130,8 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
             val interfaces = schema.interfaces.map { it.name.jvm }.toTypedArray()
 
             with(cw) {
-                visit(V1_8, ACC_PUBLIC + ACC_ABSTRACT + ACC_INTERFACE, schema.jvmName, null, "java/lang/Object", interfaces)
+                visit(V1_8, ACC_PUBLIC + ACC_ABSTRACT + ACC_INTERFACE, schema.jvmName, null,
+                        "java/lang/Object", interfaces)
                 visitAnnotation(Type.getDescriptor(CordaSerializable::class.java), true).visitEnd()
 
                 generateAbstractGetters(schema)
