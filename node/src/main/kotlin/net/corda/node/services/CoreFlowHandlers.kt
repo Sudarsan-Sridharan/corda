@@ -1,12 +1,9 @@
 package net.corda.node.services
 
 import co.paralleluniverse.fibers.Suspendable
-import net.corda.core.contracts.ContractState
-import net.corda.core.contracts.UpgradeCommand
-import net.corda.core.contracts.UpgradedContract
-import net.corda.core.contracts.requireThat
+import net.corda.core.crypto.DigitalSignature
+import net.corda.core.crypto.secureRandomBytes
 import net.corda.core.flows.*
-import net.corda.core.identity.PartyAndCertificate
 import net.corda.core.identity.Party
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.utilities.ProgressTracker
@@ -59,11 +56,19 @@ class TransactionKeyHandler(val otherSide: Party, val revocationEnabled: Boolean
 
     @Suspendable
     override fun call(): Unit {
+        val ourNonce = secureRandomBytes(TransactionKeyFlow.NONCE_SIZE_BYTES)
+        val theirNonce = sendAndReceive<ByteArray>(otherSide, ourNonce).unwrap { nonce ->
+            require(nonce.size == TransactionKeyFlow.NONCE_SIZE_BYTES)
+            nonce
+        }
         val revocationEnabled = false
         progressTracker.currentStep = SENDING_KEY
         val legalIdentityAnonymous = serviceHub.keyManagementService.freshKeyAndCert(serviceHub.myInfo.legalIdentityAndCert, revocationEnabled)
-        sendAndReceive<PartyAndCertificate>(otherSide, legalIdentityAnonymous).unwrap { confidentialIdentity ->
-            TransactionKeyFlow.validateAndRegisterIdentity(serviceHub.identityService, otherSide, confidentialIdentity)
+        val data = TransactionKeyFlow.buildDataToSign(legalIdentityAnonymous, theirNonce)
+        val ourSig: DigitalSignature = serviceHub.keyManagementService.sign(data, legalIdentityAnonymous.owningKey)
+        sendAndReceive<TransactionKeyFlow.IdentityWithSignature>(otherSide, TransactionKeyFlow.IdentityWithSignature(legalIdentityAnonymous, ourSig.bytes)).unwrap { (confidentialIdentity, theirSigBytes) ->
+            val theirSig = DigitalSignature.WithKey(confidentialIdentity.owningKey, theirSigBytes)
+            TransactionKeyFlow.validateAndRegisterIdentity(serviceHub.identityService, otherSide, confidentialIdentity, ourNonce, theirSig)
         }
     }
 }
