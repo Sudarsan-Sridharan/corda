@@ -117,6 +117,7 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
     }
 
     private fun generateEnum(enumSchema: Schema): Class<*> {
+        println ("generate Enum")
         return generate(enumSchema) { cw, schema ->
             with(cw) {
                 visitEnd()

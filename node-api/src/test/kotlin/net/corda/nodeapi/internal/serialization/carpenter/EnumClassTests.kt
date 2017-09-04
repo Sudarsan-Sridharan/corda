@@ -8,5 +8,7 @@ class EnumClassTests : AmqpCarpenterBase() {
         val enumConstants = mapOf ("A" to EnumField("A"))
 
         val schema = EnumSchema("gen.enum", enumConstants)
+
+        cc.build(schema)
     }
 }

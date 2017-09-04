@@ -77,7 +77,7 @@ abstract class Field(val field: Class<out Any?>) {
     val type: String
         get() = if (this.field.isPrimitive) this.descriptor else "Ljava/lang/Object;"
 
-    fun generateField(cw: ClassWriter) {
+    open fun generateField(cw: ClassWriter) {
         val fieldVisitor = cw.visitField(ACC_PROTECTED + ACC_FINAL, name, descriptor, null, null)
         fieldVisitor.visitAnnotation(nullabilityAnnotation, true).visitEnd()
         fieldVisitor.visitEnd()
@@ -100,6 +100,9 @@ abstract class Field(val field: Class<out Any?>) {
     abstract fun nullTest(mv: MethodVisitor, slot: Int)
 }
 
+/**
+ *
+ */
 open class NonNullableField(field: Class<out Any?>) : Field(field) {
     override val nullabilityAnnotation = "Ljavax/annotation/Nonnull;"
 
@@ -146,6 +149,9 @@ class NullableField(field: Class<out Any?>) : Field(field) {
     }
 }
 
+/**
+ *
+ */
 class EnumField() : NonNullableField(Enum::class.java) {
     override val nullabilityAnnotation = "L/ERROR/SHOULD/NOT/BE/SET"
 
@@ -157,6 +163,11 @@ class EnumField() : NonNullableField(Enum::class.java) {
 
     override fun nullTest(mv: MethodVisitor, slot: Int) {
         assert(name != unsetName)
+    }
+
+    override open fun generateField(cw: ClassWriter) {
+        cw.visitField(ACC_PROTECTED + ACC_FINAL + ACC_STATIC + ACC_ENUM, name,
+                descriptor, null, null).visitEnd()
     }
 }
 
