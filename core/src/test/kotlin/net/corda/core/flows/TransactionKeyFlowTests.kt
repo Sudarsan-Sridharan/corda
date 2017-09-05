@@ -114,5 +114,20 @@ class TransactionKeyFlowTests {
                 TransactionKeyFlow.validateAndRegisterIdentity(aliceNode.services.identityService, bob, anonymousNotaryBytes, nonce, signature.bytes)
             }
         }
+        // Check that the right signing key, right nonce but wrong identity is rejected
+        val anonymousAlice = aliceNode.database.transaction {
+            aliceNode.services.keyManagementService.freshKeyAndCert(aliceNode.services.myInfo.legalIdentityAndCert, false)
+        }
+        bobNode.database.transaction {
+            bobNode.services.keyManagementService.freshKeyAndCert(bobNode.services.myInfo.legalIdentityAndCert, false)
+        }.let { anonymousBob ->
+            val anonymousAliceBytes = SerializedBytes<PartyAndCertificate>(anonymousAlice.serialize().bytes)
+            val anonymousBobBytes = SerializedBytes<PartyAndCertificate>(anonymousBob.serialize().bytes)
+            val sigData = TransactionKeyFlow.buildDataToSign(anonymousAliceBytes, nonce)
+            val signature = bobNode.services.keyManagementService.sign(sigData, anonymousBob.owningKey)
+            assertFailsWith<IllegalArgumentException>("Signature does not match the given identity and nonce") {
+                TransactionKeyFlow.validateAndRegisterIdentity(aliceNode.services.identityService, bob, anonymousBobBytes, nonce, signature.bytes)
+            }
+        }
     }
 }
