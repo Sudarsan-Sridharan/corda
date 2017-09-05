@@ -26,6 +26,11 @@ class CarpenterClassLoader (parentClassLoader: ClassLoader = Thread.currentThrea
 }
 
 /**
+ * Which version of the java runtime are we constructing objects against
+ */
+private const val TARGET_VERSION = V1_8
+
+/**
  * A class carpenter generates JVM bytecodes for a class given a schema and then loads it into a sub-classloader.
  * The generated classes have getters, a toString method and implement a simple property access interface. The
  * resulting class can then be accessed via reflection APIs, or cast to one of the requested interfaces.
@@ -78,6 +83,7 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
 
     val classloader = CarpenterClassLoader(cl)
 
+
     private val _loaded = HashMap<String, Class<*>>()
     private val String.jvm: String get() = replace(".", "/")
 
@@ -119,9 +125,13 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
     private fun generateEnum(enumSchema: Schema): Class<*> {
         println ("generate Enum")
         return generate(enumSchema) { cw, schema ->
-            with(cw) {
-                visitEnd()
-            }
+            cw.apply {
+                visit(TARGET_VERSION, ACC_PUBLIC + ACC_FINAL + ACC_SUPER + ACC_ENUM, schema.jvmName,
+                        null, "java/lang/Enum", null)
+                generateFields(schema)
+                generateStaticEnumConstructor(schema)
+                generateEnumConstructor(schema)
+            }.visitEnd()
         }
     }
 
@@ -129,15 +139,13 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
         return generate(interfaceSchema) { cw, schema ->
             val interfaces = schema.interfaces.map { it.name.jvm }.toTypedArray()
 
-            with(cw) {
-                visit(V1_8, ACC_PUBLIC + ACC_ABSTRACT + ACC_INTERFACE, schema.jvmName, null,
+            cw.apply {
+                visit(TARGET_VERSION, ACC_PUBLIC + ACC_ABSTRACT + ACC_INTERFACE, schema.jvmName, null,
                         "java/lang/Object", interfaces)
                 visitAnnotation(Type.getDescriptor(CordaSerializable::class.java), true).visitEnd()
 
                 generateAbstractGetters(schema)
-
-                visitEnd()
-            }
+            }.visitEnd()
         }
     }
 
@@ -148,19 +156,18 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
 
             if (SimpleFieldAccess::class.java !in schema.interfaces) interfaces.add(SimpleFieldAccess::class.java.name.jvm)
 
-            with(cw) {
-                visit(V1_8, ACC_PUBLIC + ACC_SUPER, schema.jvmName, null, superName, interfaces.toTypedArray())
+            cw.apply {
+                visit(TARGET_VERSION, ACC_PUBLIC + ACC_SUPER, schema.jvmName, null, superName,
+                        interfaces.toTypedArray())
                 visitAnnotation(Type.getDescriptor(CordaSerializable::class.java), true).visitEnd()
 
                 generateFields(schema)
-                generateConstructor(schema)
+                generateClassConstructor(schema)
                 generateGetters(schema)
                 if (schema.superclass == null)
                     generateGetMethod()   // From SimplePropertyAccess
                 generateToString(schema)
-
-                visitEnd()
-            }
+            }.visitEnd()
         }
     }
 
@@ -248,14 +255,63 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
         }
     }
 
-    private fun ClassWriter.generateConstructor(schema: Schema) {
-        with(visitMethod(
+    private fun ClassWriter.generateStaticEnumConstructor(schema: Schema) {
+        visitMethod(ACC_STATIC, "<clinit>", "()V", null, null).apply {
+
+            visitIntInsn(BIPUSH, schema.fields.size)
+            visitTypeInsn(ANEWARRAY, schema.jvmName)
+            visitInsn(DUP)
+            visitInsn(DUP)
+
+            var idx = 0
+            schema.fields.forEach {
+                visitIntInsn(BIPUSH, idx)
+                visitTypeInsn(NEW, schema.jvmName)
+                visitInsn(DUP)
+                visitLdcInsn(it.key)
+                visitIntInsn(BIPUSH, idx)
+                visitMethodInsn(INVOKESPECIAL, schema.jvmName, "<init>", "(Ljava/lang/String;I)V", false)
+                visitInsn(DUP)
+                visitFieldInsn(PUTSTATIC, schema.jvmName, it.key, "[${schema.jvmName};")
+                visitInsn(AASTORE)
+            }
+
+            visitFieldInsn(PUTSTATIC, schema.jvmName, "\$VALUES", "[${schema.jvmName};")
+
+            visitMaxs(0,0)
+        }.visitEnd()
+    }
+
+    private fun ClassWriter.generateEnumConstructor(schema: Schema) {
+        visitMethod(ACC_PROTECTED, "<init>", "(Ljava/lang/String;I)V", "()V", null).apply {
+            visitParameter("\$enum\$name", ACC_SYNTHETIC)
+            visitParameter("\$enum\$ordinal", ACC_SYNTHETIC)
+
+            visitCode()
+
+            visitVarInsn(ALOAD, 0) // this
+            visitVarInsn(ALOAD, 1)
+            visitVarInsn(ILOAD, 2)
+            visitMethodInsn(INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false)
+            visitInsn(RETURN)
+
+            /*
+            visitLocalVariable("this", "L${schema.jvmName};", null, null, null, 0)
+            visitLocalVariable("\$enum_name_or_ordinal\$0", "Ljava/lang/String;", null, null, null, 1)
+            visitLocalVariable("\$enum_name_or_ordinal\$1", "I", null, null, null, 2)
+            */
+
+           visitMaxs(0, 0)
+        }.visitEnd()
+    }
+
+    private fun ClassWriter.generateClassConstructor(schema: Schema) {
+        visitMethod(
                 ACC_PUBLIC,
                 "<init>",
                 "(" + schema.descriptorsIncludingSuperclasses().values.joinToString("") + ")V",
                 null,
-                null))
-        {
+                null).apply {
             var idx = 0
             schema.fields.values.forEach { it.visitParameter(this, idx++) }
 
@@ -285,8 +341,7 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
             }
             visitInsn(RETURN)
             visitMaxs(0, 0)
-            visitEnd()
-        }
+        }.visitEnd()
     }
 
     private fun MethodVisitor.load(slot: Int, type: Field): Int {
