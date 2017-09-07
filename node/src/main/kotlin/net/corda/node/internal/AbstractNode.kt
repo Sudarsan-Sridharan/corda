@@ -25,6 +25,7 @@ import net.corda.core.node.PluginServiceHub
 import net.corda.core.node.ServiceEntry
 import net.corda.core.node.services.*
 import net.corda.core.node.services.NetworkMapCache.MapChange
+import net.corda.core.schemas.MappedSchema
 import net.corda.core.serialization.SerializeAsToken
 import net.corda.core.serialization.SingletonSerializeAsToken
 import net.corda.core.transactions.SignedTransaction
@@ -209,6 +210,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
                 installCordaServices(scanResult)
                 registerInitiatedFlows(scanResult)
                 findRPCFlows(scanResult)
+                _services.schemaService.registerCustomSchemas(findCustomSchemas(scanResult))
             }
 
             runOnStop += network::stop
@@ -388,6 +390,10 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
                             ContractUpgradeFlow.Initiator::class.java)
     }
 
+    private fun findCustomSchemas(scanResult: ScanResult): Set<MappedSchema> {
+        return scanResult.getClassesWithSuperclass(MappedSchema::class).toSet()
+    }
+
     /**
      * Installs a flow that's core to the Corda platform. Unlike CorDapp flows which are versioned individually using
      * [InitiatingFlow.version], core flows have the same version as the node's platform version. To cater for backwards
@@ -480,6 +486,29 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         return getNamesOfClassesWithAnnotation(annotation.java)
                 .mapNotNull { loadClass(it) }
                 .filterNot { isAbstract(it.modifiers) }
+    }
+
+    private fun <T : Any> ScanResult.getClassesWithSuperclass(type: KClass<T>): List<out T> {
+        fun loadClass(className: String): Class<out T>? {
+            return try {
+                // TODO Make sure this is loaded by the correct class loader
+                Class.forName(className, false, javaClass.classLoader).asSubclass(type.java)
+            } catch (e: ClassCastException) {
+                log.warn("$className must be a sub-type of ${type.java.name}")
+                null
+            } catch (e: Exception) {
+                log.warn("Unable to load class $className", e)
+                null
+            }
+        }
+
+        return getNamesOfSubclassesOf(type.java)
+                .mapNotNull { loadClass(it) }
+                .filterNot { isAbstract(it.modifiers) }
+                .map {
+                    val constructor = it.getDeclaredConstructor().apply { isAccessible = true }
+                    constructor.newInstance()
+                }
     }
 
     private fun makeVaultObservers() {
