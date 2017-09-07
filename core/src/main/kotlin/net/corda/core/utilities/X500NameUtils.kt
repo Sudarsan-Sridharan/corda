@@ -2,6 +2,7 @@
 
 package net.corda.core.utilities
 
+import net.corda.core.identity.CordaX500Name
 import net.corda.core.internal.toX509CertHolder
 import org.bouncycastle.asn1.ASN1ObjectIdentifier
 import org.bouncycastle.asn1.x500.X500Name
