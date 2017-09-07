@@ -124,6 +124,9 @@ UNRELEASED
   directly build a ``FilteredTransaction`` using provided filtering functions, without first accessing the
   ``tx: WireTransaction``.
 
+* Gradle task ``deployNodes`` can have an additional parameter `configFile` with the path to a properties file
+  to be appended to node.conf.
+
 Milestone 14
 ------------
 
