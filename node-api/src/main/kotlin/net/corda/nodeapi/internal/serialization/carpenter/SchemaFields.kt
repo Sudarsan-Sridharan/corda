@@ -4,37 +4,43 @@ import jdk.internal.org.objectweb.asm.Opcodes.*
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Type
+import java.beans.BeanDescriptor
 import java.util.*
 
 abstract class Field(val field: Class<out Any?>) {
-    abstract val descriptor: String
+    abstract var descriptor: String?
 
     companion object {
         const val unsetName = "Unset"
     }
 
     var name: String = unsetName
+    abstract val type: String
 
-    abstract fun copy(name: String, field: Class<out Any?>): Field
+    abstract fun generateField(cw: ClassWriter)
+    abstract fun visitParameter(mv: MethodVisitor, idx: Int)
 }
 
+/**
+ * Base class for class members
+ */
 abstract class ClassField(field: Class<out Any?>) : Field(field) {
     abstract val nullabilityAnnotation: String
+    abstract fun nullTest(mv: MethodVisitor, slot: Int)
 
-    override val descriptor: String get() = Type.getDescriptor(this.field)
-
-    open val type: String get() = if (this.field.isPrimitive) this.descriptor else "Ljava/lang/Object;"
-
-    open fun generateField(cw: ClassWriter) {
-        cw.visitField(ACC_PROTECTED + ACC_FINAL, name, descriptor, null, null).visitAnnotation(
-                nullabilityAnnotation, true).visitEnd()
-    }
+    override var descriptor = Type.getDescriptor(this.field)
+    override val type: String get() = if (this.field.isPrimitive) this.descriptor else "Ljava/lang/Object;"
 
     fun addNullabilityAnnotation(mv: MethodVisitor) {
         mv.visitAnnotation(nullabilityAnnotation, true).visitEnd()
     }
 
-    fun visitParameter(mv: MethodVisitor, idx: Int) {
+    override fun generateField(cw: ClassWriter) {
+        cw.visitField(ACC_PROTECTED + ACC_FINAL, name, descriptor, null, null).visitAnnotation(
+                nullabilityAnnotation, true).visitEnd()
+    }
+
+    override fun visitParameter(mv: MethodVisitor, idx: Int) {
         with(mv) {
             visitParameter(name, 0)
             if (!field.isPrimitive) {
@@ -42,12 +48,14 @@ abstract class ClassField(field: Class<out Any?>) : Field(field) {
             }
         }
     }
-
-    abstract fun nullTest(mv: MethodVisitor, slot: Int)
 }
 
 /**
+ * A member of a constructed class that can be assigned to null, the
+ * mandatory type for primitives, but also any member that cannot be
+ * null
  *
+ * maps to AMQP mandatory = true fields
  */
 open class NonNullableField(field: Class<out Any?>) : ClassField(field) {
     override val nullabilityAnnotation = "Ljavax/annotation/Nonnull;"
@@ -55,8 +63,6 @@ open class NonNullableField(field: Class<out Any?>) : ClassField(field) {
     constructor(name: String, field: Class<out Any?>) : this(field) {
         this.name = name
     }
-
-    override fun copy(name: String, field: Class<out Any?>) = NonNullableField(name, field)
 
     override fun nullTest(mv: MethodVisitor, slot: Int) {
         assert(name != unsetName)
@@ -76,6 +82,11 @@ open class NonNullableField(field: Class<out Any?>) : ClassField(field) {
     }
 }
 
+/**
+ * A member of a constructed class that can be assigned to null,
+ *
+ * maps to AMQP mandatory = false fields
+ */
 class NullableField(field: Class<out Any?>) : ClassField(field) {
     override val nullabilityAnnotation = "Ljavax/annotation/Nullable;"
 
@@ -88,8 +99,6 @@ class NullableField(field: Class<out Any?>) : ClassField(field) {
         this.name = name
     }
 
-    override fun copy(name: String, field: Class<out Any?>) = NullableField(name, field)
-
     override fun nullTest(mv: MethodVisitor, slot: Int) {
         assert(name != unsetName)
     }
@@ -98,29 +107,20 @@ class NullableField(field: Class<out Any?>) : ClassField(field) {
 /**
  *
  */
-class EnumField() : Field(Enum::class.java) {
-    override val descriptor: String get() = Type.getDescriptor(this.field)
-
-    override val nullabilityAnnotation = "L/ERROR/SHOULD/NOT/BE/SET"
+class EnumField: Field(Enum::class.java) {
+    override var descriptor : String? = null
 
     override val type: String
-        get() = if (this.field.isPrimitive) this.descriptor else "Ljava/lang/Object;"
-
-    constructor(name: String) : this() {
-        this.name = name
-    }
-
-    override fun copy(name: String, field: Class<out Any?>) = EnumField(name)
-
-    override fun nullTest(mv: MethodVisitor, slot: Int) {
-        assert(name != unsetName)
-    }
+        get() = "Ljava/lang/Enum;"
 
     override fun generateField(cw: ClassWriter) {
-        println(descriptor)
-        println(type)
-        cw.visitField(ACC_PROTECTED + ACC_FINAL + ACC_STATIC + ACC_ENUM, name,
+        println("descriptor = $descriptor")
+        cw.visitField(ACC_PUBLIC + ACC_FINAL + ACC_STATIC + ACC_ENUM, name,
                 descriptor, null, null).visitEnd()
+    }
+
+    override fun visitParameter(mv: MethodVisitor, idx: Int) {
+        mv.visitParameter(name, 0)
     }
 }
 

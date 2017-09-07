@@ -123,11 +123,10 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
     }
 
     private fun generateEnum(enumSchema: Schema): Class<*> {
-        println ("generate Enum")
         return generate(enumSchema) { cw, schema ->
             cw.apply {
                 visit(TARGET_VERSION, ACC_PUBLIC + ACC_FINAL + ACC_SUPER + ACC_ENUM, schema.jvmName,
-                        null, "java/lang/Enum", null)
+                        "Ljava/lang/Enum<L${schema.jvmName};>;", "java/lang/Enum", null)
                 generateFields(schema)
                 generateStaticEnumConstructor(schema)
                 generateEnumConstructor(schema)
@@ -184,6 +183,12 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
 
     private fun ClassWriter.generateFields(schema: Schema) {
         schema.fields.forEach { it.value.generateField(this) }
+
+        if (schema is EnumSchema) {
+            println ("generateFields: L${schema.jvmName};")
+            visitField(ACC_PRIVATE + ACC_FINAL + ACC_STATIC + ACC_SYNTHETIC,
+                    "\$VALUES", "L${schema.jvmName};", null, null)
+        }
     }
 
     private fun ClassWriter.generateToString(schema: Schema) {
@@ -225,8 +230,9 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
     }
 
     private fun ClassWriter.generateGetters(schema: Schema) {
-        for ((name, type) in schema.fields) {
-            with(visitMethod(ACC_PUBLIC, "get" + name.capitalize(), "()" + type.descriptor, null, null)) {
+        @Suppress("UNCHECKED_CAST")
+        for ((name, type) in (schema.fields as Map<String, ClassField>)) {
+            visitMethod(ACC_PUBLIC, "get" + name.capitalize(), "()" + type.descriptor, null, null).apply {
                 type.addNullabilityAnnotation(this)
                 visitCode()
                 visitVarInsn(ALOAD, 0)  // Load 'this'
@@ -240,18 +246,16 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
                     else -> visitInsn(ARETURN)
                 }
                 visitMaxs(0, 0)
-                visitEnd()
-            }
+            }.visitEnd()
         }
     }
 
     private fun ClassWriter.generateAbstractGetters(schema: Schema) {
-        for ((name, field) in schema.fields) {
+        @Suppress("UNCHECKED_CAST")
+        for ((name, field) in (schema.fields as Map<String, ClassField>)) {
             val opcodes = ACC_ABSTRACT + ACC_PUBLIC
-            with(visitMethod(opcodes, "get" + name.capitalize(), "()${field.descriptor}", null, null)) {
-                // abstract method doesn't have any implementation so just end
-                visitEnd()
-            }
+            // abstract method doesn't have any implementation so just end
+            visitMethod(opcodes, "get" + name.capitalize(), "()${field.descriptor}", null, null).visitEnd()
         }
     }
 
@@ -269,14 +273,15 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
                 visitTypeInsn(NEW, schema.jvmName)
                 visitInsn(DUP)
                 visitLdcInsn(it.key)
-                visitIntInsn(BIPUSH, idx)
+                visitIntInsn(BIPUSH, idx++)
                 visitMethodInsn(INVOKESPECIAL, schema.jvmName, "<init>", "(Ljava/lang/String;I)V", false)
                 visitInsn(DUP)
-                visitFieldInsn(PUTSTATIC, schema.jvmName, it.key, "[${schema.jvmName};")
+                visitFieldInsn(PUTSTATIC, schema.jvmName, it.key, "L${schema.jvmName};")
                 visitInsn(AASTORE)
             }
 
-            visitFieldInsn(PUTSTATIC, schema.jvmName, "\$VALUES", "[${schema.jvmName};")
+            visitFieldInsn(PUTSTATIC, schema.jvmName, "\$VALUES", "[L${schema.jvmName};")
+            visitInsn(RETURN)
 
             visitMaxs(0,0)
         }.visitEnd()
@@ -313,6 +318,7 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
                 null,
                 null).apply {
             var idx = 0
+
             schema.fields.values.forEach { it.visitParameter(this, idx++) }
 
             visitCode()
@@ -332,7 +338,8 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
 
             // Assign the fields from parameters.
             var slot = 1 + superclassFields.size
-            for ((name, field) in schema.fields.entries) {
+            @Suppress("UNCHECKED_CAST")
+            for ((name, field) in (schema.fields as Map<String, ClassField>)) {
                 field.nullTest(this, slot)
 
                 visitVarInsn(ALOAD, 0)  // Load 'this' onto the stack

@@ -1,31 +1,34 @@
 package net.corda.nodeapi.internal.serialization.carpenter
 
-import jdk.internal.org.objectweb.asm.Opcodes.*
-import org.objectweb.asm.ClassWriter
-import org.objectweb.asm.MethodVisitor
-import org.objectweb.asm.Type
-import java.util.*
+import kotlin.collections.LinkedHashMap
 
 /**
  * A Schema represents a desired class.
  */
 abstract class Schema(
         val name: String,
-        fields: Map<String, Field>,
+        var fields: Map<String, Field>,
         val superclass: Schema? = null,
-        val interfaces: List<Class<*>> = emptyList())
+        val interfaces: List<Class<*>> = emptyList(),
+        updater : (String, Field) -> Unit)
 {
     private fun Map<String, Field>.descriptors() =
             LinkedHashMap(this.mapValues { it.value.descriptor })
 
-    /* Fix the order up front if the user didn't, inject the name into the field as it's
-       neater when iterating */
-    val fields = LinkedHashMap(fields.mapValues { it.value.copy(it.key, it.value.field) })
+    init {
+        println (fields)
+        println (updater)
+        fields.forEach { updater (it.key, it.value) }
+
+        // Fix the order up front if the user didn't, inject the name into the field as it's
+        // neater when iterating
+        fields = LinkedHashMap(fields)
+    }
 
     fun fieldsIncludingSuperclasses(): Map<String, Field> =
             (superclass?.fieldsIncludingSuperclasses() ?: emptyMap()) + LinkedHashMap(fields)
 
-    fun descriptorsIncludingSuperclasses(): Map<String, String> =
+    fun descriptorsIncludingSuperclasses(): Map<String, String?> =
             (superclass?.descriptorsIncludingSuperclasses() ?: emptyMap()) + fields.descriptors()
 
     val jvmName: String
@@ -37,22 +40,25 @@ class ClassSchema(
         fields: Map<String, Field>,
         superclass: Schema? = null,
         interfaces: List<Class<*>> = emptyList()
-) : Schema(name, fields, superclass, interfaces)
+) : Schema(name, fields, superclass, interfaces, { name, field -> field.name = name })
 
 class InterfaceSchema(
         name: String,
         fields: Map<String, Field>,
         superclass: Schema? = null,
         interfaces: List<Class<*>> = emptyList()
-) : Schema(name, fields, superclass, interfaces)
+) : Schema(name, fields, superclass, interfaces, { name, field -> field.name = name })
 
 class EnumSchema(
         name: String,
         fields: Map<String, Field>
-) : Schema(name, fields, null, emptyList())
+) : Schema(name, fields, null, emptyList(), { fieldName, field ->
+        (field as EnumField).name = fieldName
+        field.descriptor = "L${name.replace(".", "/")};"
+})
 
 object CarpenterSchemaFactory {
-    fun newInstance (
+    fun newInstance(
             name: String,
             fields: Map<String, Field>,
             superclass: Schema? = null,
