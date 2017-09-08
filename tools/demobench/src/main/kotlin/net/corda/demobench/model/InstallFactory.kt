@@ -3,7 +3,7 @@ package net.corda.demobench.model
 import com.typesafe.config.Config
 import net.corda.core.node.services.ServiceInfo
 import net.corda.core.node.services.ServiceType
-import net.corda.core.utilities.parseNetworkHostAndPort
+import net.corda.core.utilities.NetworkHostAndPort
 import org.bouncycastle.asn1.x500.X500Name
 import tornadofx.*
 import java.io.IOException
@@ -48,7 +48,7 @@ class InstallFactory : Controller() {
 
     private fun Config.parsePort(path: String): Int {
         val address = this.getString(path)
-        val port = address.parseNetworkHostAndPort().port
+        val port = NetworkHostAndPort.parse(address).port
         require(nodeController.isPortValid(port), { "Invalid port $port from '$path'." })
         return port
     }

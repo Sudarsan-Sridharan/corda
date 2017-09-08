@@ -652,7 +652,7 @@ class DriverDSL(
                 is NetworkMapStartStrategy.Nominated -> {
                     serviceConfig(networkMapCandidates.filter {
                         it.name == legalName.toString()
-                    }.single().config.getString("p2pAddress").parseNetworkHostAndPort()).let {
+                    }.single().config.getString("p2pAddress").let(NetworkHostAndPort.Companion::parse)).let {
                         { nodeName: X500Name -> if (nodeName == legalName) null else it }
                     }
                 }
