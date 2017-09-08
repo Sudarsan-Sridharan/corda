@@ -22,7 +22,11 @@ abstract class Field(val field: Class<out Any?>) {
 }
 
 /**
- * Base class for class members
+ * Any field that can be a member of an object
+ *
+ * Known
+ *   - [NullableField]
+ *   - [NonNullableField]
  */
 abstract class ClassField(field: Class<out Any?>) : Field(field) {
     abstract val nullabilityAnnotation: String
@@ -105,7 +109,7 @@ class NullableField(field: Class<out Any?>) : ClassField(field) {
 }
 
 /**
- *
+ * Represents enum constants within an enum
  */
 class EnumField: Field(Enum::class.java) {
     override var descriptor : String? = null
@@ -114,7 +118,6 @@ class EnumField: Field(Enum::class.java) {
         get() = "Ljava/lang/Enum;"
 
     override fun generateField(cw: ClassWriter) {
-        println("descriptor = $descriptor")
         cw.visitField(ACC_PUBLIC + ACC_FINAL + ACC_STATIC + ACC_ENUM, name,
                 descriptor, null, null).visitEnd()
     }

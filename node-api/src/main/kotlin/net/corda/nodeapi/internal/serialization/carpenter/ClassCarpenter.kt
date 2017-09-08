@@ -129,7 +129,8 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
                         "Ljava/lang/Enum<L${schema.jvmName};>;", "java/lang/Enum", null)
                 generateFields(schema)
                 generateStaticEnumConstructor(schema)
-                generateEnumConstructor(schema)
+                generateEnumConstructor()
+                generateEnumValues(schema)
             }.visitEnd()
         }
     }
@@ -153,7 +154,9 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
             val superName = schema.superclass?.jvmName ?: "java/lang/Object"
             val interfaces = schema.interfaces.map { it.name.jvm }.toMutableList()
 
-            if (SimpleFieldAccess::class.java !in schema.interfaces) interfaces.add(SimpleFieldAccess::class.java.name.jvm)
+            if (SimpleFieldAccess::class.java !in schema.interfaces) {
+                interfaces.add(SimpleFieldAccess::class.java.name.jvm)
+            }
 
             cw.apply {
                 visit(TARGET_VERSION, ACC_PUBLIC + ACC_SUPER, schema.jvmName, null, superName,
@@ -182,13 +185,7 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
     }
 
     private fun ClassWriter.generateFields(schema: Schema) {
-        schema.fields.forEach { it.value.generateField(this) }
-
-        if (schema is EnumSchema) {
-            println ("generateFields: L${schema.jvmName};")
-            visitField(ACC_PRIVATE + ACC_FINAL + ACC_STATIC + ACC_SYNTHETIC,
-                    "\$VALUES", "L${schema.jvmName};", null, null)
-        }
+        schema.generateFields(this)
     }
 
     private fun ClassWriter.generateToString(schema: Schema) {
@@ -261,14 +258,14 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
 
     private fun ClassWriter.generateStaticEnumConstructor(schema: Schema) {
         visitMethod(ACC_STATIC, "<clinit>", "()V", null, null).apply {
-
+            visitCode()
             visitIntInsn(BIPUSH, schema.fields.size)
             visitTypeInsn(ANEWARRAY, schema.jvmName)
-            visitInsn(DUP)
             visitInsn(DUP)
 
             var idx = 0
             schema.fields.forEach {
+                visitInsn(DUP)
                 visitIntInsn(BIPUSH, idx)
                 visitTypeInsn(NEW, schema.jvmName)
                 visitInsn(DUP)
@@ -280,14 +277,39 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
                 visitInsn(AASTORE)
             }
 
-            visitFieldInsn(PUTSTATIC, schema.jvmName, "\$VALUES", "[L${schema.jvmName};")
+            visitFieldInsn(PUTSTATIC, schema.jvmName, "\$VALUES", schema.asArray)
             visitInsn(RETURN)
 
             visitMaxs(0,0)
         }.visitEnd()
     }
 
-    private fun ClassWriter.generateEnumConstructor(schema: Schema) {
+    private fun ClassWriter.generateEnumValues(schema: Schema) {
+        visitMethod(ACC_PUBLIC + ACC_STATIC, "values", "()${schema.asArray}", null, null).apply {
+            visitCode()
+            visitFieldInsn(GETSTATIC, schema.jvmName, "\$VALUES", schema.asArray)
+            visitMethodInsn(INVOKEVIRTUAL, schema.asArray, "clone", "()Ljava/lang/Object;", false)
+            visitTypeInsn(CHECKCAST, schema.asArray)
+            visitInsn(ARETURN)
+            visitMaxs(0, 0)
+        }.visitEnd()
+    }
+
+    private fun ClassWriter.generateValueOf(schema: Schema) {
+        visitMethod(ACC_PUBLIC + ACC_STATIC, "valueOf", "(Ljava/lang/String;)L${schema.jvmName}'", null, null).apply {
+            visitCode()
+            visitLdcInsn(Type.getType("L${schema.jvmName};"))
+            visitVarInsn(ALOAD, 0)
+            visitMethodInsn(INVOKESTATIC, "java/lang/Enum",
+                    "valueOf", "(Ljava/lang/Class;Ljava/lang/String;)LJava/lang/Enum;", false)
+            visitTypeInsn(CHECKCAST, schema.jvmName)
+            visitInsn(ARETURN)
+            visitMaxs(0, 0)
+        }.visitEnd()
+
+    }
+
+    private fun ClassWriter.generateEnumConstructor() {
         visitMethod(ACC_PROTECTED, "<init>", "(Ljava/lang/String;I)V", "()V", null).apply {
             visitParameter("\$enum\$name", ACC_SYNTHETIC)
             visitParameter("\$enum\$ordinal", ACC_SYNTHETIC)
@@ -300,13 +322,7 @@ class ClassCarpenter(cl: ClassLoader = Thread.currentThread().contextClassLoader
             visitMethodInsn(INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false)
             visitInsn(RETURN)
 
-            /*
-            visitLocalVariable("this", "L${schema.jvmName};", null, null, null, 0)
-            visitLocalVariable("\$enum_name_or_ordinal\$0", "Ljava/lang/String;", null, null, null, 1)
-            visitLocalVariable("\$enum_name_or_ordinal\$1", "I", null, null, null, 2)
-            */
-
-           visitMaxs(0, 0)
+            visitMaxs(0, 0)
         }.visitEnd()
     }
 
