@@ -47,25 +47,38 @@ data class WireTransaction(val componentGroups: List<ComponentGroup>, override v
     ) : this(createComponentGroups(inputs, outputs, commands, attachments, notary, timeWindow), privacySalt)
 
     /** Hashes of the ZIP/JAR files that are needed to interpret the contents of this wire transaction. */
-    override val attachments: List<SecureHash> = componentGroups[ATTACHMENTS_GROUP.ordinal].components.map { SerializedBytes<SecureHash>(it.bytes).deserialize() }
+    override val attachments: List<SecureHash> = deserialiseComponentGroup(ATTACHMENTS_GROUP, { SerializedBytes<SecureHash>(it).deserialize() })
 
     /** Pointers to the input states on the ledger, identified by (tx identity hash, output index). */
-    override val inputs: List<StateRef> = componentGroups[INPUTS_GROUP.ordinal].components.map { SerializedBytes<StateRef>(it.bytes).deserialize() }
+    override val inputs: List<StateRef> = deserialiseComponentGroup(INPUTS_GROUP, { SerializedBytes<StateRef>(it).deserialize() })
 
-    override val outputs: List<TransactionState<ContractState>> = componentGroups[OUTPUTS_GROUP.ordinal].components.map { SerializedBytes<TransactionState<ContractState>>(it.bytes).deserialize(context = SerializationFactory.defaultFactory.defaultContext.withAttachmentsClassLoader(attachments)) }
+    override val outputs: List<TransactionState<ContractState>> = deserialiseComponentGroup(OUTPUTS_GROUP, { SerializedBytes<TransactionState<ContractState>>(it).deserialize(context = SerializationFactory.defaultFactory.defaultContext.withAttachmentsClassLoader(attachments)) })
 
     /** Ordered list of ([CommandData], [PublicKey]) pairs that instruct the contracts what to do. */
-    override val commands: List<Command<*>> = componentGroups[COMMANDS_GROUP.ordinal].components.map { SerializedBytes<Command<*>>(it.bytes).deserialize(context = SerializationFactory.defaultFactory.defaultContext.withAttachmentsClassLoader(attachments)) }
+    override val commands: List<Command<*>> = deserialiseComponentGroup(COMMANDS_GROUP, { SerializedBytes<Command<*>>(it).deserialize(context = SerializationFactory.defaultFactory.defaultContext.withAttachmentsClassLoader(attachments)) })
 
     override val notary: Party? = let {
-        val notaries: List<Party> = componentGroups[NOTARY_GROUP.ordinal].components.map { SerializedBytes<Party>(it.bytes).deserialize() }
+        val notaries: List<Party> = deserialiseComponentGroup(NOTARY_GROUP, { SerializedBytes<Party>(it).deserialize() })
         check(notaries.size <= 1) { "Invalid Transaction. More than 1 notary party detected." }
         if (notaries.isNotEmpty()) notaries[0] else null
     }
     override val timeWindow: TimeWindow? = let {
-        val timeWindows: List<TimeWindow> = componentGroups[TIMEWINDOW_GROUP.ordinal].components.map { SerializedBytes<TimeWindow>(it.bytes).deserialize() }
+        val timeWindows: List<TimeWindow> = deserialiseComponentGroup(TIMEWINDOW_GROUP, { SerializedBytes<TimeWindow>(it).deserialize() })
         check(timeWindows.size <= 1) { "Invalid Transaction. More than 1 time-window detected." }
         if (timeWindows.isNotEmpty()) timeWindows[0] else null
+    }
+
+    // Helper function to return a meaningful exception if deserialisation of a component fails.
+    fun <T> deserialiseComponentGroup(groupEnum: ComponentGroupEnum, deserialiseBody: (ByteArray) -> T): List<T> {
+        return componentGroups[groupEnum.ordinal].components.mapIndexed { index, component ->
+            try {
+                deserialiseBody(component.bytes)
+            } catch (e: MissingAttachmentsException) {
+                throw e
+            } catch (e: Exception) { // This is usually a ClassCastException resulted from setting non-expected types to a component group.
+                throw Exception("Malformed WireTransaction, $groupEnum at index $index cannot be deserialised", e)
+            }
+        }
     }
 
     init {
