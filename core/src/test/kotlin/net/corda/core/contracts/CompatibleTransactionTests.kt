@@ -14,6 +14,7 @@ import net.corda.testing.contracts.DummyContract
 import org.junit.Test
 import java.time.Instant
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 
@@ -78,15 +79,15 @@ class CompatibleTransactionTests : TestDependencyInjectionBase() {
         // Group leaves ordering matters and will cause an exception during construction. We should keep a standardised
         // sequence for backwards/forwards compatibility. For instance inputs should always be the first leaf, then outputs, the commands etc.
         val shuffledComponentGroupsA = listOf(outputGroup, inputGroup, commandGroup, attachmentGroup, notaryGroup, timeWindowGroup)
-        assertFailsWith<ClassCastException> { WireTransaction(componentGroups = shuffledComponentGroupsA, privacySalt = privacySalt) }
+        assertFails { WireTransaction(componentGroups = shuffledComponentGroupsA, privacySalt = privacySalt) }
     }
 
     @Test
     fun `WireTransaction constructors and compatibility`() {
-        val inputGroup = ComponentGroup(inputs.map { it -> it.serialize() })
-        val outputGroup = ComponentGroup(outputs.map { it -> it.serialize() })
-        val commandGroup = ComponentGroup(commands.map { it -> it.serialize() })
-        val attachmentGroup = ComponentGroup(attachments.map { it -> it.serialize() }) // The list is empty.
+        val inputGroup = ComponentGroup(inputs.map { it.serialize() })
+        val outputGroup = ComponentGroup(outputs.map { it.serialize() })
+        val commandGroup = ComponentGroup(commands.map { it.serialize() })
+        val attachmentGroup = ComponentGroup(attachments.map { it.serialize() }) // The list is empty.
         val notaryGroup = ComponentGroup(listOf(notary.serialize()))
         val timeWindowGroup = ComponentGroup(listOf(timeWindow.serialize()))
 
@@ -98,7 +99,7 @@ class CompatibleTransactionTests : TestDependencyInjectionBase() {
 
         // Malformed tx - attachments (index = 3) is not List<SecureHash>.
         val componentGroupsB = listOf(inputGroup, outputGroup, commandGroup, inputGroup, notaryGroup, timeWindowGroup)
-        assertFailsWith<ClassCastException> { WireTransaction(componentGroupsB, privacySalt) }
+        assertFails { WireTransaction(componentGroupsB, privacySalt) }
 
         val componentGroupsCompatibleA = listOf(
                 inputGroup,

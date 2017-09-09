@@ -69,7 +69,7 @@ data class WireTransaction(val componentGroups: List<ComponentGroup>, override v
     }
 
     // Helper function to return a meaningful exception if deserialisation of a component fails.
-    fun <T> deserialiseComponentGroup(groupEnum: ComponentGroupEnum, deserialiseBody: (ByteArray) -> T): List<T> {
+    private fun <T> deserialiseComponentGroup(groupEnum: ComponentGroupEnum, deserialiseBody: (ByteArray) -> T): List<T> {
         return componentGroups[groupEnum.ordinal].components.mapIndexed { index, component ->
             try {
                 deserialiseBody(component.bytes)
@@ -88,25 +88,15 @@ data class WireTransaction(val componentGroups: List<ComponentGroup>, override v
         if (timeWindow != null) check(notary != null) { "Transactions with time-windows must be notarised" }
     }
 
-    // Check, by accessing each component, if all of them can be deserialised successfully.
-    // This check is added for clarity and to get a more meaningful error on init function.
-    private fun checkAllFieldsDeserialised() {
-        try {
-            inputs; outputs; commands; attachments; notary; timeWindow
-        } catch (cce: ClassCastException) {
-            throw ClassCastException("Malformed WireTransaction, one of the components cannot be deserialised - ${cce.message}")
-        }
-    }
-
     /** The transaction id is represented by the root hash of Merkle tree over the transaction components. */
     override val id: SecureHash get() = merkleTree.hash
 
     /** Public keys that need to be fulfilled by signatures in order for the transaction to be valid. */
     val requiredSigningKeys: Set<PublicKey> get() {
         val commandKeys = commands.flatMap { it.signers }.toSet()
-        // TODO: prevent notary field from being set if there are no inputs and no timestamp
+        // TODO: prevent notary field from being set if there are no inputs and no timestamp.
         return if (notary != null && (inputs.isNotEmpty() || timeWindow != null)) {
-            commandKeys + notary!!.owningKey
+            commandKeys + notary.owningKey
         } else {
             commandKeys
         }
@@ -172,8 +162,8 @@ data class WireTransaction(val componentGroups: List<ComponentGroup>, override v
      * see the user-guide section "Transaction tear-offs" to learn more about this topic.
      */
     @VisibleForTesting
-    val groupsMerkleRoots: List<SecureHash> get() = componentGroups.mapIndexed { index, it ->
-        if (it.components.isNotEmpty()) {
+    val groupsMerkleRoots: List<SecureHash> get() = componentGroups.mapIndexed { index, (components) ->
+        if (components.isNotEmpty()) {
             MerkleTree.getMerkleTree(availableComponentHashes[index]).hash
         } else {
             SecureHash.zeroHash

@@ -3,10 +3,7 @@ package net.corda.core.transactions
 import net.corda.core.contracts.*
 import net.corda.core.crypto.*
 import net.corda.core.identity.Party
-import net.corda.core.serialization.CordaSerializable
-import net.corda.core.serialization.SerializedBytes
-import net.corda.core.serialization.deserialize
-import net.corda.core.serialization.serialize
+import net.corda.core.serialization.*
 import net.corda.core.utilities.OpaqueBytes
 import java.security.PublicKey
 import java.util.function.Predicate
@@ -17,7 +14,7 @@ import java.util.function.Predicate
  * may be missing in the case of this representing a "torn" transaction. Please see the user guide section
  * "Transaction tear-offs" to learn more about this feature.
  *
- * The [availableComponents] property is used for calculation of the transaction's [MerkleTree], which is in
+ * The [availableComponentGroups] property is used for calculation of the transaction's [MerkleTree], which is in
  * turn used to derive the ID hash.
  */
 interface TraversableTransaction {
@@ -120,8 +117,8 @@ class FilteredLeaves(
 /**
  * Class representing merkleized filtered transaction.
  * @param id Merkle tree root hash.
- * @param filteredLeaves Leaves included in a filtered transaction.
- * @param partialMerkleTree Merkle branch needed to verify filteredLeaves.
+ * @param filteredComponentGroups list of transaction components groups remained after filters are applied to [WireTransaction].
+ * @param partialMerkleTree the partial Merkle tree of the transaction groups.
  */
 @CordaSerializable
 class FilteredTransaction private constructor(
@@ -129,42 +126,47 @@ class FilteredTransaction private constructor(
         val filteredComponentGroups: List<FilteredComponentGroup>,
         private val partialMerkleTree: PartialMerkleTree
 ) {
-
     val filteredLeaves: FilteredLeaves = buildFilteredLeaves()
 
+    // TODO: Consider avoiding duplicated code of this and the WireTransaction related construction.
     private fun buildFilteredLeaves(): FilteredLeaves {
-        try {
-            /** Pointers to the input states on the ledger, identified by (tx identity hash, output index). */
-            val inputs: List<StateRef> = filteredComponentGroups[ComponentGroupEnum.INPUTS_GROUP.ordinal].components.map { SerializedBytes<StateRef>(it.bytes).deserialize() }
+        /** Hashes of the ZIP/JAR files that are needed to interpret the contents of this wire transaction. */
+        val attachments: List<SecureHash> = deserialiseFilteredComponentGroup(ComponentGroupEnum.ATTACHMENTS_GROUP, { SerializedBytes<SecureHash>(it).deserialize() })
 
-            val outputs: List<TransactionState<ContractState>> = filteredComponentGroups[ComponentGroupEnum.OUTPUTS_GROUP.ordinal].components.map { SerializedBytes<TransactionState<ContractState>>(it.bytes).deserialize() }
+        /** Pointers to the input states on the ledger, identified by (tx identity hash, output index). */
+        val inputs: List<StateRef> = deserialiseFilteredComponentGroup(ComponentGroupEnum.INPUTS_GROUP, { SerializedBytes<StateRef>(it).deserialize() })
 
-            /** Ordered list of ([CommandData], [PublicKey]) pairs that instruct the contracts what to do. */
-            val commands: List<Command<*>> = filteredComponentGroups[ComponentGroupEnum.COMMANDS_GROUP.ordinal].components.map { SerializedBytes<Command<*>>(it.bytes).deserialize() }
+        val outputs: List<TransactionState<ContractState>> = deserialiseFilteredComponentGroup(ComponentGroupEnum.OUTPUTS_GROUP, { SerializedBytes<TransactionState<ContractState>>(it).deserialize(context = SerializationFactory.defaultFactory.defaultContext.withAttachmentsClassLoader(attachments)) })
 
-            /** Hashes of the ZIP/JAR files that are needed to interpret the contents of this wire transaction. */
-            val attachments: List<SecureHash> = filteredComponentGroups[ComponentGroupEnum.ATTACHMENTS_GROUP.ordinal].components.map { SerializedBytes<SecureHash>(it.bytes).deserialize() }
+        /** Ordered list of ([CommandData], [PublicKey]) pairs that instruct the contracts what to do. */
+        val commands: List<Command<*>> = deserialiseFilteredComponentGroup(ComponentGroupEnum.COMMANDS_GROUP, { SerializedBytes<Command<*>>(it).deserialize(context = SerializationFactory.defaultFactory.defaultContext.withAttachmentsClassLoader(attachments)) })
 
-            val notary: Party? = buildNotary()
-
-            val timeWindow: TimeWindow? = buildTimeWindow()
-
-            return FilteredLeaves(inputs, attachments, outputs, commands, notary, timeWindow)
-        } catch (cce: ClassCastException) {
-            throw ClassCastException("Malformed FilteredTransaction, one of the components cannot be deserialised - ${cce.message}")
+        val notary: Party? = let {
+            val notaries: List<Party> = deserialiseFilteredComponentGroup(ComponentGroupEnum.NOTARY_GROUP, { SerializedBytes<Party>(it).deserialize() })
+            check(notaries.size <= 1) { "Invalid Transaction. More than 1 notary party detected." }
+            if (notaries.isNotEmpty()) notaries[0] else null
         }
+
+        val timeWindow: TimeWindow? = let {
+            val timeWindows: List<TimeWindow> = deserialiseFilteredComponentGroup(ComponentGroupEnum.TIMEWINDOW_GROUP, { SerializedBytes<TimeWindow>(it).deserialize() })
+            check(timeWindows.size <= 1) { "Invalid Transaction. More than 1 time-window detected." }
+            if (timeWindows.isNotEmpty()) timeWindows[0] else null
+        }
+
+        return FilteredLeaves(inputs, attachments, outputs, commands, notary, timeWindow)
     }
 
-    private fun buildNotary(): Party? {
-        val notaries: List<Party> = filteredComponentGroups[ComponentGroupEnum.NOTARY_GROUP.ordinal].components.map { SerializedBytes<Party>(it.bytes).deserialize() }
-        check(notaries.size <= 1) { "Invalid Transaction. More than 1 notary party detected." }
-        return if (notaries.isNotEmpty()) notaries[0] else null
-    }
-
-    private fun buildTimeWindow(): TimeWindow? {
-        val timeWindows: List<TimeWindow> = filteredComponentGroups[ComponentGroupEnum.TIMEWINDOW_GROUP.ordinal].components.map { SerializedBytes<TimeWindow>(it.bytes).deserialize() }
-        check(timeWindows.size <= 1) { "Invalid Transaction. More than 1 time-window detected." }
-        return if (timeWindows.isNotEmpty()) timeWindows[0] else null
+    // Helper function to return a meaningful exception if deserialisation of a component fails.
+    private fun <T> deserialiseFilteredComponentGroup(groupEnum: ComponentGroupEnum, deserialiseBody: (ByteArray) -> T): List<T> {
+        return filteredComponentGroups[groupEnum.ordinal].components.mapIndexed { index, component ->
+            try {
+                deserialiseBody(component.bytes)
+            } catch (e: MissingAttachmentsException) {
+                throw e
+            } catch (e: ClassCastException) { // This is usually a ClassCastException resulted from setting non-expected types to a component group.
+                throw Exception("Malformed FilteredTransaction, $groupEnum at index $index cannot be deserialised", e)
+            }
+        }
     }
 
     companion object {
@@ -200,11 +202,11 @@ class FilteredTransaction private constructor(
                 if (filtering.test(t)) {
                     val group = filteredSerialisedComponents[ordinal]
                     if (group == null) {
-                        filteredSerialisedComponents.put(ordinal, mutableListOf(t.serialize()))
+                        filteredSerialisedComponents.put(ordinal, mutableListOf(wtx.componentGroups[ordinal].components[index]))
                         filteredComponentNonces.put(ordinal, mutableListOf(wtx.availableComponentNonces[ordinal][index]))
                         filteredComponentHashes.put(ordinal, mutableListOf(wtx.availableComponentHashes[ordinal][index]))
                     } else {
-                        group.add(t.serialize())
+                        group.add(wtx.componentGroups[ordinal].components[index])
                         filteredComponentNonces[ordinal]!!.add(wtx.availableComponentNonces[ordinal][index])
                         filteredComponentHashes[ordinal]!!.add(wtx.availableComponentHashes[ordinal][index])
                     }
@@ -216,8 +218,8 @@ class FilteredTransaction private constructor(
                 wtx.outputs.forEachIndexed { index, it -> filter(it, index, ComponentGroupEnum.OUTPUTS_GROUP.ordinal) }
                 wtx.commands.forEachIndexed { index, it -> filter(it, index, ComponentGroupEnum.COMMANDS_GROUP.ordinal) }
                 wtx.attachments.forEachIndexed { index, it -> filter(it, index, ComponentGroupEnum.ATTACHMENTS_GROUP.ordinal) }
-                if (wtx.notary != null) filter(wtx.notary!!, 0, ComponentGroupEnum.NOTARY_GROUP.ordinal)
-                if (wtx.timeWindow != null) filter(wtx.timeWindow!!, 0, ComponentGroupEnum.TIMEWINDOW_GROUP.ordinal)
+                if (wtx.notary != null) filter(wtx.notary, 0, ComponentGroupEnum.NOTARY_GROUP.ordinal)
+                if (wtx.timeWindow != null) filter(wtx.timeWindow, 0, ComponentGroupEnum.TIMEWINDOW_GROUP.ordinal)
             }
 
             fun createPartialMerkleTree(ordinal: Int) = PartialMerkleTree.build(MerkleTree.getMerkleTree(wtx.availableComponentHashes[ordinal]), filteredComponentHashes[ordinal]!!)
