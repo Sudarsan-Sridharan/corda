@@ -210,7 +210,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
                 installCordaServices(scanResult)
                 registerInitiatedFlows(scanResult)
                 findRPCFlows(scanResult)
-                _services.schemaService.registerCustomSchemas(findCustomSchemas(scanResult))
+                registerCustomSchemas(findCustomSchemas(scanResult))
             }
 
             runOnStop += network::stop
@@ -469,45 +469,31 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         return if (paths.isNotEmpty()) FastClasspathScanner().overrideClasspath(paths).scan() else null
     }
 
-    private fun <T : Any> ScanResult.getClassesWithAnnotation(type: KClass<T>, annotation: KClass<out Annotation>): List<Class<out T>> {
-        fun loadClass(className: String): Class<out T>? {
-            return try {
-                // TODO Make sure this is loaded by the correct class loader
-                Class.forName(className, false, javaClass.classLoader).asSubclass(type.java)
-            } catch (e: ClassCastException) {
-                log.warn("As $className is annotated with ${annotation.qualifiedName} it must be a sub-type of ${type.java.name}")
-                null
-            } catch (e: Exception) {
-                log.warn("Unable to load class $className", e)
-                null
-            }
+    private fun <T : Any> loadClass(className: String, type: KClass<T>): Class<out T>? {
+        return try {
+            // TODO Make sure this is loaded by the correct class loader
+            Class.forName(className, false, javaClass.classLoader).asSubclass(type.java)
+        } catch (e: ClassCastException) {
+            log.warn("As $className must be a sub-type of ${type.java.name}")
+            null
+        } catch (e: Exception) {
+            log.warn("Unable to load class $className", e)
+            null
         }
+    }
 
+    private fun <T : Any> ScanResult.getClassesWithAnnotation(type: KClass<T>, annotation: KClass<out Annotation>): List<Class<out T>> {
         return getNamesOfClassesWithAnnotation(annotation.java)
-                .mapNotNull { loadClass(it) }
+                .mapNotNull { loadClass(it, type) }
                 .filterNot { isAbstract(it.modifiers) }
     }
 
-    private fun <T : Any> ScanResult.getClassesWithSuperclass(type: KClass<T>): List<out T> {
-        fun loadClass(className: String): Class<out T>? {
-            return try {
-                // TODO Make sure this is loaded by the correct class loader
-                Class.forName(className, false, javaClass.classLoader).asSubclass(type.java)
-            } catch (e: ClassCastException) {
-                log.warn("$className must be a sub-type of ${type.java.name}")
-                null
-            } catch (e: Exception) {
-                log.warn("Unable to load class $className", e)
-                null
-            }
-        }
-
+    private fun <T : Any> ScanResult.getClassesWithSuperclass(type: KClass<T>): List<T> {
         return getNamesOfSubclassesOf(type.java)
-                .mapNotNull { loadClass(it) }
+                .mapNotNull { loadClass(it, type) }
                 .filterNot { isAbstract(it.modifiers) }
                 .map {
-                    val constructor = it.getDeclaredConstructor().apply { isAccessible = true }
-                    constructor.newInstance()
+                    it.defaultOrNewInstance()
                 }
     }
 
@@ -802,7 +788,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         override val monitoringService = MonitoringService(MetricRegistry())
         override val validatedTransactions = makeTransactionStorage()
         override val transactionVerifierService by lazy { makeTransactionVerifierService() }
-        override val schemaService by lazy { NodeSchemaService(pluginRegistries.flatMap { it.requiredSchemas }.toSet()) }
+        override val schemaService by lazy { NodeSchemaService() }
         override val networkMapCache by lazy { PersistentNetworkMapCache(this) }
         override val vaultService by lazy { NodeVaultService(this) }
         override val contractUpgradeService by lazy { ContractUpgradeServiceImpl() }
@@ -848,6 +834,10 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
             }
         }
         override fun jdbcSession(): Connection = database.createSession()
+    }
+
+    fun registerCustomSchemas(schemas: Set<MappedSchema>) {
+        database.hibernateConfig.schemaService.registerCustomSchemas(schemas)
     }
 
 }
